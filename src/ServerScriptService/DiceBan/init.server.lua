@@ -23,7 +23,6 @@ Network.Parent = Services['ReplicatedStorage']
 local BanUI = script.BanUI
 
 --// functions
-MsgService:Subscribe('ban')
 QuickStore:SetData('ban',{
 	['Bans'] = {};
 })
@@ -70,14 +69,7 @@ local function BanPlayer(userID)
 		findPlr:Kick('\nBanned')
 		return
 	end
-	local MessageReplies,MessageData,MessageOptional = MsgService.RepliesAsync(userID)
-	if MessageReplies then
-		MessageOptional:Disconnect()
-		return
-	else
-		MessageData:Disconnect()
-	end
-	return
+	MsgService:FireEvent('plrSearch',userID)
 end
 
 local function PackArgs(message)
@@ -89,6 +81,13 @@ local function PackArgs(message)
 	end
 	return cmdArgs
 end
+
+MsgService:ConnectKey('plrSearch',function(message)
+	if tonumber(message) then
+		BanPlayer(message)
+		return true
+	end
+end)
 
 local Commands = {
 	['ban'] = function(userID)
