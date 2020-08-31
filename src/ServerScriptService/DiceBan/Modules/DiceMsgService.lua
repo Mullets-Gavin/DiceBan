@@ -3,80 +3,154 @@
 	@Desc: Ping for a player!
 --]]
 
+--[[
+	DOCUMENTATION:
+	https://github.com/Mullets-Gavin/DiceMsgService
+	
+	API:
+	:ConnectKey(key,function)
+	:DisconnectKey(key)
+	:FireKey(key,message,function)
+	:Parse(key,message)
+	:Pack(key,tuple)
+	.Settings(dictionary)
+--]]
+
 --// logic
 local MsgService = {}
-MsgService.Topic = 'mulletmafiadev'
+MsgService.Keys = {}
+MsgService.Cache = {}
+MsgService.Debug = false
+MsgService.Kilobyte = 1024
+MsgService.Timeout = 5
+MsgService.Default = 'mulletmafiadev'
+MsgService.Prefix = '___'
+MsgService.Divider = '|'
 
 --// services
 local Services = setmetatable({}, {__index = function(cache, serviceName)
-	cache[serviceName] = game:GetService(serviceName)
-	return cache[serviceName]
-end})
+		cache[serviceName] = game:GetService(serviceName)
+		return cache[serviceName]
+	end})
 
 --// functions
-local function ExecuteCode(plr) -- throw some code in here to execute if the player is found
-	plr:Kick('\nBanned')
+function MsgService.Settings(dict)
+	MsgService.Timeout = dict['Timeout'] or 5
+	MsgService.Prefix = dict['Prefix'] or '___'
+	MsgService.Debug = dict['Debug'] or false
+	MsgService.Divider = dict['Divider'] or '|'
 end
 
-function MsgService.RepliesAsync(userID)
-	if Services['RunService']:IsStudio() then return end
-	local newTopic = 'topic-'.. userID
-	local serverReplied = false
-	local replyName;
-	local replyJob;
-	local replyEvent;
-	Services['MessagingService']:PublishAsync(MsgService.Topic,tostring(userID))
-	replyEvent = Services['MessagingService']:SubscribeAsync(newTopic,function(message)
-		serverReplied = true
-		--[[
-			EXAMPLE RESPONSE:
-			name-Greg;job-2f8h:82fe:f3y8n:f389u
-		--]]
-		local parseMessage = string.split(message.Data,';')
-		for index,data in ipairs(parseMessage) do
-			local messageType;
-			local messageResponse;
-			local parseData = string.split(data,'=')
-			for count,file in ipairs(parseData) do
-				if file == 'name' or file == 'job' then
-					messageType = file
-				else
-					messageResponse = file
-				end
+function MsgService:Parse(key,message)
+	assert(typeof(key) == 'string',"[MSG SERVICE]: Expected string as first parameter, got '".. typeof(key) .."'")
+	assert(typeof(message) == 'string',"[MSG SERVICE]: Expected string as second parameter, got '".. typeof(message) .."'")
+	local parse = string.split(message,MsgService.Divider)
+	local contents = {}
+	for index,data in ipairs(parse) do
+		table.insert(contents,data)
+	end
+	if #contents > 1 then
+		return contents
+	end
+	return message
+end
+
+function MsgService:Pack(key,...)
+	assert(typeof(key) == 'string',"[MSG SERVICE]: Expected string as first parameter, got '".. typeof(key) .."'")
+	local pack = {...}
+	if #pack < 1 then
+		if MsgService.Debug then
+			warn("[MSG SERVICE]: Function connected to key '".. key .."' returned nothing")
+		end
+		return nil
+	end
+	if #pack == 1 then
+		local check = pack[1]
+		if not tostring(check) then
+			if MsgService.Debug then
+				warn("[MSG SERVICE]: Contents return by function connected to key '".. key .."' could not be converted")
 			end
-			if messageType == 'name' then
-				replyName = messageResponse
-			elseif messageType == 'job' then
-				replyJob = messageResponse
+			return nil
+		end
+		return check
+	else
+		local combine = nil
+		for index,str in pairs(pack) do
+			local convert = tostring(str)
+			if not convert then
+				if MsgService.Debug then
+					warn("[MSG SERVICE]: Not all returned contents from function connected to key '".. key .."' could not be converted")
+				end
+				return combine
+			end
+			if combine then
+				combine = combine.. MsgService.Divider ..convert
+			else
+				combine = convert
 			end
 		end
-	end)
-	local timeout = tick()
-	repeat
-		Services['RunService'].Heartbeat:Wait()
-	until tick()-timeout >= 3 or serverReplied
-	if not serverReplied then
-		return false,replyEvent
-	else
-		return true,{name = replyName,job = replyJob},replyEvent
+		return combine
 	end
 end
 
-function MsgService:Subscribe(topic)
+function MsgService:FireEvent(key,message,func)
 	if Services['RunService']:IsStudio() then return end
-	if topic then MsgService.Topic = topic end
-	local subscribeEvent;
-	subscribeEvent = Services['MessagingService']:SubscribeAsync(MsgService.Topic,function(message)
-		local userID = tonumber(message.Data)
-		local assumedTopic = 'topic-'.. userID
-		for index,plrs in pairs(Services['Players']:GetPlayers()) do
-			if plrs.UserId == userID then
-				ExecuteCode(plrs)
-				local packedData = 'name='.. plrs.Name ..';job='.. game.JobId
-				Services['MessagingService']:PublishAsync(assumedTopic,packedData)
+	assert(typeof(key) == 'string',"[MSG SERVICE]: Expected string as first parameter, got '".. typeof(key) .."'")
+	assert(typeof(key) == 'string',"[MSG SERVICE]: Expected string as second parameter, got '".. typeof(key) .."'")
+	local replyReceived,replyEvent
+	Services['MessagingService']:PublishAsync(key,message)
+	if func then
+		replyEvent = Services['MessagingService']:SubscribeAsync(MsgService.Prefix..key,function(message)
+			local parse = MsgService:Parse(key,message.Data)
+			func(parse)
+		end)
+		local startTime = tick()
+		while not replyReceived or (tick() - startTime) > 5 do
+			Services['RunService'].Heartbeat:Wait()
+		end
+		replyEvent:Disconnect()
+	end
+end
+
+function MsgService:ConnectKey(key,func)
+	if Services['RunService']:IsStudio() then return end
+	assert(typeof(key) == 'string',"[MSG SERVICE]: Expected string as first parameter, got '".. typeof(key) .."'")
+	assert(typeof(func) == 'function',"[MSG SERVICE]: Expected function as second parameter, got '".. typeof(func).. "'")
+	if MsgService.Cache[key] then
+		if MsgService.Debug then
+			warn('[MSG SERVICE]: Key is already assigned a function; returning nil')
+		end
+		return
+	end
+	MsgService.Cache[key] = {
+		['Function'] = func;
+		['Event'] = nil;
+	}
+	MsgService.Cache[key]['Event'] = Services['MessagingService']:SubscribeAsync(key,function(message)
+		local results = func(message.Data)
+		if not results then return end
+		local packedMsg = MsgService:Pack(key,results)
+		if tostring(packedMsg) then
+			if #packedMsg > MsgService.Kilobyte then
+				local previousMsg = packedMsg
+				packedMsg = string.sub(packedMsg,1,MsgService.Kilobyte)
+				if MsgService.Debug then
+					warn("[MSG SERVICE]: Message returning exceeded 1 kilobyte, message '".. previousMsg .."' condensed to '".. packedMsg .."'")
+				end
 			end
+			Services['MessagingService']:PublishAsync(MsgService.Prefix..key,packedMsg)
 		end
 	end)
+end
+
+function MsgService:DisconnectKey(key)
+	if Services['RunService']:IsStudio() then return end
+	assert(typeof(key) == 'string',"[MSG SERVICE]: Expected string, got '".. typeof(key) .."'")
+	if  MsgService.Cache[key] then
+		MsgService.Cache[key]['Event']:Disconnect()
+		MsgService.Cache[key]['Function'] = nil
+		MsgService.Cache[key] = nil
+	end
 end
 
 return MsgService
